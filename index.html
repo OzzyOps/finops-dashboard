@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinOps Monthly Dashboard</title>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f3f2f1; margin: 0; padding: 20px; color: #323130; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { color: #0078d4; margin-top: 0; }
+        .upload-box { border: 2px dashed #0078d4; padding: 40px; text-align: center; border-radius: 6px; cursor: pointer; background: #f0f8ff; transition: 0.2s; }
+        .upload-box:hover { background: #e0efff; }
+        .hidden { display: none; }
+        
+        /* KPI Cards */
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 30px; }
+        .kpi-card { background: #faf9f8; padding: 15px; border-left: 5px solid #ccc; border-radius: 4px; }
+        .kpi-card.G { border-left-color: #107c10; } /* Green */
+        .kpi-card.A { border-left-color: #ffaa44; } /* Amber */
+        .kpi-card.R { border-left-color: #d13438; } /* Red */
+        .kpi-title { font-size: 14px; color: #605e5c; font-weight: 600; }
+        .kpi-value { font-size: 24px; font-weight: bold; margin: 5px 0; }
+        .kpi-sub { font-size: 12px; color: #666; }
+
+        /* Charts */
+        .chart-container { margin-top: 40px; }
+        canvas { max-height: 350px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📊 Monthly Performance: Mark Neil</h1>
+    <p>Upload your monthly <i>"MSL Cumulative Billing"</i> file to generate the report.</p>
+    
+    <div id="drop-zone" class="upload-box">
+        <h3>📂 Drag & Drop Excel File Here</h3>
+        <p>or click to browse</p>
+        <input type="file" id="file-input" accept=".xlsx" style="display:none">
+    </div>
+
+    <div id="dashboard" class="hidden">
+        <h2 id="period-header" style="border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 30px;"></h2>
+        
+        <div id="kpi-grid" class="kpi-grid"></div>
+
+        <div class="chart-container">
+            <h3>📈 Platform Roll-up Trend</h3>
+            <canvas id="platformChart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <h3>📉 One Consumer Trend</h3>
+            <canvas id="consumerChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- CONFIGURATION ---
+    const TARGET_SHEETS = {
+        "One Consumer": "One Consumer (Against Mark)",
+        "Home": "Home (Against Mark)",
+        "Mobile": "Mobile (Against Mark)",
+        "Migrations": "Migrations (Against Mark)"
+    };
+    const PERIODS = ["P1 - April","P2 - May","P3 - June","P4 - July","P5 - August","P6 - September","P7 - October","P8 - November","P9 - December","P10 - January","P11 - February","P12 - March"];
+
+    // --- EVENT LISTENERS ---
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background = '#e0efff'; });
+    dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.style.background = '#f0f8ff'; });
+    dropZone.addEventListener('drop', (e) => { 
+        e.preventDefault(); 
+        dropZone.style.background = '#f0f8ff';
+        handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+    // --- MAIN LOGIC ---
+    function handleFile(file) {
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            processData(workbook);
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function processData(workbook) {
+        // 1. Extract Data
+        let sheetData = {};
+        let rollUp = new Array(12).fill(0);
+        
+        for (let [shortName, sheetName] of Object.entries(TARGET_SHEETS)) {
+            const ws = workbook.Sheets[sheetName];
+            if (!ws) { console.warn(`Missing sheet: ${sheetName}`); continue; }
+            
+            // Convert to JSON (array of arrays)
+            const raw = XLSX.utils.sheet_to_json(ws, {header: 1});
+            
+            // Find Header Row
+            let headerRowIdx = raw.findIndex(row => row && row.some(cell => cell && cell.toString().includes("Project Code")));
+            if (headerRowIdx === -1) continue;
+
+            const headers = raw[headerRowIdx].map(h => (h||"").toString().trim());
+            const rows = raw.slice(headerRowIdx + 1);
+
+            let monthlySums = new Array(12).fill(0);
+
+            PERIODS.forEach((p, i) => {
+                const colIdx = headers.indexOf(p);
+                if (colIdx > -1) {
+                    rows.forEach(r => {
+                        let val = parseFloat(r[colIdx]);
+                        if (!isNaN(val)) monthlySums[i] += val;
+                    });
+                }
+            });
+
+            sheetData[shortName] = monthlySums;
+            // Add to Rollup
+            monthlySums.forEach((val, i) => rollUp[i] += val);
+        }
+
+        // 2. Detect Current Period (PX) - Last month with data
+        let pxIndex = -1;
+        for(let i=0; i<12; i++) {
+            if(Math.abs(rollUp[i]) > 0.01) pxIndex = i; // simple non-zero check
+        }
+        if(pxIndex === -1) pxIndex = 0; // Default if empty
+
+        // 3. Render Dashboard
+        renderDashboard(sheetData, rollUp, pxIndex);
+    }
+
+    function renderDashboard(sheetData, rollUp, pxIndex) {
+        document.getElementById('drop-zone').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+        document.getElementById('period-header').innerText = `Reporting Period: ${PERIODS[pxIndex]}`;
+
+        const kpiGrid = document.getElementById('kpi-grid');
+        kpiGrid.innerHTML = '';
+
+        // Helper: Calculate RAG
+        const calcRag = (current, history) => {
+            if(!current) return 'R';
+            const avg = history.reduce((a,b)=>a+b,0) / history.length;
+            if(!avg) return 'A';
+            const dev = Math.abs((current - avg) / avg);
+            return dev <= 0.15 ? 'G' : (dev <= 0.30 ? 'A' : 'R');
+        };
+
+        // Helper: Create Card
+        const createCard = (title, val, rag) => {
+            const div = document.createElement('div');
+            div.className = `kpi-card ${rag}`;
+            div.innerHTML = `
+                <div class="kpi-title">${title}</div>
+                <div class="kpi-value">£${val.toLocaleString('en-GB', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                <div class="kpi-sub">Status: ${rag === 'G' ? 'On Track' : (rag==='A'?'Review':'Attention')}</div>
+            `;
+            return div;
+        };
+
+        // Generate Cards for Each Sheet + Platform
+        // Platform First
+        const platPx = rollUp[pxIndex];
+        const platHist = rollUp.slice(Math.max(0, pxIndex-3), pxIndex);
+        kpiGrid.appendChild(createCard("PLATFORM TOTAL", platPx, calcRag(platPx, platHist)));
+
+        Object.keys(sheetData).forEach(name => {
+            const series = sheetData[name];
+            const pxVal = series[pxIndex];
+            const hist = series.slice(Math.max(0, pxIndex-3), pxIndex);
+            kpiGrid.appendChild(createCard(name, pxVal, calcRag(pxVal, hist)));
+        });
+
+        // 4. Render Charts (Truncated to PX)
+        const labels = PERIODS.slice(0, pxIndex + 1);
+        
+        // Platform Chart
+        new Chart(document.getElementById('platformChart'), {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Total Spend (£)',
+                    data: rollUp.slice(0, pxIndex + 1),
+                    borderColor: '#0078d4',
+                    backgroundColor: 'rgba(0, 120, 212, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: { responsive: true, plugins: { legend: {display: false} } }
+        });
+
+        // Consumer Chart
+        const consumerData = sheetData['One Consumer'] || [];
+        new Chart(document.getElementById('consumerChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'One Consumer (£)',
+                    data: consumerData.slice(0, pxIndex + 1),
+                    backgroundColor: '#002D72'
+                }]
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
