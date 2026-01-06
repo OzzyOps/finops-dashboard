@@ -6,72 +6,104 @@
     <title>FinOps Monthly Dashboard</title>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #f3f2f1; margin: 0; padding: 20px; color: #323130; }
-        .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        h1 { color: #0078d4; margin-top: 0; }
-        .upload-box { border: 2px dashed #0078d4; padding: 40px; text-align: center; border-radius: 6px; cursor: pointer; background: #f0f8ff; transition: 0.2s; }
-        .upload-box:hover { background: #e0efff; }
-        .hidden { display: none; }
+        /* --- GENERAL STYLES --- */
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f3f2f1; margin: 0; padding: 20px; color: #323130; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { color: #0078d4; margin-top: 0; font-size: 24px; }
+        .header-row { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 20px; }
         
-        /* KPI Cards */
-        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 30px; }
-        .kpi-card { background: #faf9f8; padding: 15px; border-left: 5px solid #ccc; border-radius: 4px; }
+        /* --- UPLOAD BOX --- */
+        .upload-box { border: 2px dashed #0078d4; padding: 50px; text-align: center; border-radius: 6px; cursor: pointer; background: #f0f8ff; transition: 0.2s; margin-top: 20px; }
+        .upload-box:hover { background: #e0efff; }
+        .hidden { display: none !important; }
+
+        /* --- DASHBOARD ELEMENTS --- */
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
+        .kpi-card { background: #faf9f8; padding: 20px; border-left: 6px solid #ccc; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .kpi-card.G { border-left-color: #107c10; } /* Green */
         .kpi-card.A { border-left-color: #ffaa44; } /* Amber */
         .kpi-card.R { border-left-color: #d13438; } /* Red */
-        .kpi-title { font-size: 14px; color: #605e5c; font-weight: 600; }
-        .kpi-value { font-size: 24px; font-weight: bold; margin: 5px 0; }
+        .kpi-title { font-size: 13px; text-transform: uppercase; color: #605e5c; font-weight: 700; letter-spacing: 0.5px; }
+        .kpi-value { font-size: 28px; font-weight: bold; margin: 10px 0; color: #201f1e; }
         .kpi-sub { font-size: 12px; color: #666; }
 
-        /* Charts */
-        .chart-container { margin-top: 40px; }
-        canvas { max-height: 350px; }
+        .chart-wrapper { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+        .chart-box { border: 1px solid #eee; padding: 15px; border-radius: 8px; }
+        canvas { width: 100% !important; height: 300px !important; }
+
+        /* --- BUTTONS --- */
+        .btn { padding: 10px 20px; background-color: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+        .btn:hover { background-color: #106ebe; }
+        .btn-print { background-color: #333; }
+
+        /* --- PDF PRINT STYLES --- */
+        @media print {
+            body { background: white; padding: 0; }
+            .container { box-shadow: none; max-width: 100%; padding: 20px; }
+            .upload-box, .btn, .no-print { display: none !important; }
+            .chart-wrapper { grid-template-columns: 1fr 1fr; } /* Keep side-by-side in PDF */
+            .kpi-card { border: 1px solid #ddd; break-inside: avoid; }
+        }
+        
+        /* Mobile adjustment */
+        @media (max-width: 768px) { .chart-wrapper { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>📊 Monthly Performance: Mark Neil</h1>
-    <p>Upload your monthly <i>"MSL Cumulative Billing"</i> file to generate the report.</p>
-    
+    <div class="header-row">
+        <div>
+            <h1>Monthly Performance Report</h1>
+            <div id="subtitle" style="color: #666;">Area: Mark Neil (One Consumer, Home, Mobile, Migrations)</div>
+        </div>
+        <button onclick="window.print()" class="btn btn-print hidden" id="print-btn">
+            📄 Export PDF
+        </button>
+    </div>
+
+    <div id="error-msg" style="color: red; margin-bottom: 10px; display: none;"></div>
+
     <div id="drop-zone" class="upload-box">
-        <h3>📂 Drag & Drop Excel File Here</h3>
-        <p>or click to browse</p>
+        <h3 style="margin:0 0 10px 0;">📂 Upload "MSL Cumulative Billing"</h3>
+        <p style="margin:0; color:#666;">Drag & drop your Excel file here</p>
         <input type="file" id="file-input" accept=".xlsx" style="display:none">
     </div>
 
     <div id="dashboard" class="hidden">
-        <h2 id="period-header" style="border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 30px;"></h2>
+        <h3 id="current-period-label" style="border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px;"></h3>
         
         <div id="kpi-grid" class="kpi-grid"></div>
 
-        <div class="chart-container">
-            <h3>📈 Platform Roll-up Trend</h3>
-            <canvas id="platformChart"></canvas>
-        </div>
-        
-        <div class="chart-container">
-            <h3>📉 One Consumer Trend</h3>
-            <canvas id="consumerChart"></canvas>
+        <div class="chart-wrapper">
+            <div class="chart-box">
+                <h4 style="margin-top:0; color:#0078d4;">Platform Roll-up</h4>
+                <canvas id="platformChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <h4 style="margin-top:0; color:#002D72;">One Consumer (Against Mark)</h4>
+                <canvas id="consumerChart"></canvas>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
     // --- CONFIGURATION ---
-    const TARGET_SHEETS = {
-        "One Consumer": "One Consumer (Against Mark)",
-        "Home": "Home (Against Mark)",
-        "Mobile": "Mobile (Against Mark)",
-        "Migrations": "Migrations (Against Mark)"
-    };
-    const PERIODS = ["P1 - April","P2 - May","P3 - June","P4 - July","P5 - August","P6 - September","P7 - October","P8 - November","P9 - December","P10 - January","P11 - February","P12 - March"];
+    // Note: We use "includes" matching so "One Consumer (Against Mark)" will match "One Consumer"
+    const TARGET_KEYS = ["One Consumer", "Home", "Mobile", "Migrations"];
+    // Periods to look for in columns (P1..P12)
+    const PERIOD_LABELS = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12"];
+    const FULL_LABELS = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"];
 
-    // --- EVENT LISTENERS ---
+    // --- DOM ELEMENTS ---
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
-    
+    const errorMsg = document.getElementById('error-msg');
+
+    // --- EVENT LISTENERS ---
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background = '#e0efff'; });
     dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.style.background = '#f0f8ff'; });
@@ -85,76 +117,122 @@
     // --- MAIN LOGIC ---
     function handleFile(file) {
         if(!file) return;
+        errorMsg.style.display = 'none';
+        
         const reader = new FileReader();
         reader.onload = (e) => {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, {type: 'array'});
-            processData(workbook);
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                processData(workbook);
+            } catch (err) {
+                showError("Could not read file. Is it a valid Excel file?");
+                console.error(err);
+            }
         };
         reader.readAsArrayBuffer(file);
     }
 
     function processData(workbook) {
-        // 1. Extract Data
         let sheetData = {};
         let rollUp = new Array(12).fill(0);
-        
-        for (let [shortName, sheetName] of Object.entries(TARGET_SHEETS)) {
+        let foundAnyData = false;
+
+        // 1. Loop through our target keys (One Consumer, Home...)
+        TARGET_KEYS.forEach(key => {
+            // Fuzzy Find Sheet: Look for sheet name containing the key (case insensitive)
+            const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes(key.toLowerCase()) && n.toLowerCase().includes("mark"));
+            
+            if (!sheetName) {
+                console.warn(`Sheet not found for key: ${key}`);
+                sheetData[key] = new Array(12).fill(0); // Fill with zeros if missing
+                return;
+            }
+
             const ws = workbook.Sheets[sheetName];
-            if (!ws) { console.warn(`Missing sheet: ${sheetName}`); continue; }
-            
-            // Convert to JSON (array of arrays)
-            const raw = XLSX.utils.sheet_to_json(ws, {header: 1});
-            
-            // Find Header Row
-            let headerRowIdx = raw.findIndex(row => row && row.some(cell => cell && cell.toString().includes("Project Code")));
-            if (headerRowIdx === -1) continue;
+            const raw = XLSX.utils.sheet_to_json(ws, {header: 1}); // Get 2D Array
 
-            const headers = raw[headerRowIdx].map(h => (h||"").toString().trim());
-            const rows = raw.slice(headerRowIdx + 1);
+            // 2. Fuzzy Find Header Row
+            // Look for row containing "Project Code" OR "P1"
+            let headerRowIdx = raw.findIndex(row => 
+                row && row.some(cell => {
+                    const str = (cell||"").toString().toLowerCase();
+                    return str.includes("project code") || (str.includes("p1") && str.includes("april"));
+                })
+            );
 
+            if (headerRowIdx === -1) {
+                console.warn(`Header row not found in ${sheetName}`);
+                sheetData[key] = new Array(12).fill(0);
+                return;
+            }
+
+            // 3. Robust Column Mapping
+            const headerRow = raw[headerRowIdx].map(h => (h||"").toString().trim().toLowerCase());
+            const dataRows = raw.slice(headerRowIdx + 1);
+            
             let monthlySums = new Array(12).fill(0);
 
-            PERIODS.forEach((p, i) => {
-                const colIdx = headers.indexOf(p);
+            // For each period P1..P12, find the column index
+            PERIOD_LABELS.forEach((pLabel, i) => {
+                // Look for column header that starts with "p1 " or equals "p1"
+                // This handles "P1 - April" and "P1-April" and "P1 -  April"
+                const colIdx = headerRow.findIndex(h => h === pLabel.toLowerCase() || h.startsWith(pLabel.toLowerCase() + " ") || h.includes(pLabel.toLowerCase() + "-"));
+                
                 if (colIdx > -1) {
-                    rows.forEach(r => {
-                        let val = parseFloat(r[colIdx]);
-                        if (!isNaN(val)) monthlySums[i] += val;
+                    dataRows.forEach(row => {
+                        let val = row[colIdx];
+                        // Clean currency strings if necessary (rare in raw data but good to be safe)
+                        if (typeof val === 'string') val = val.replace(/[£,]/g, ''); 
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) {
+                            monthlySums[i] += num;
+                            if (num !== 0) foundAnyData = true;
+                        }
                     });
                 }
             });
 
-            sheetData[shortName] = monthlySums;
-            // Add to Rollup
+            sheetData[key] = monthlySums;
+            // Add to Global Rollup
             monthlySums.forEach((val, i) => rollUp[i] += val);
+        });
+
+        if (!foundAnyData) {
+            showError("Data found was all zeros. Check if the Excel columns match 'P1 - April', 'P2 - May' etc.");
         }
 
-        // 2. Detect Current Period (PX) - Last month with data
+        // 4. Determine Current Period (Last non-zero month in Rollup)
         let pxIndex = -1;
-        for(let i=0; i<12; i++) {
-            if(Math.abs(rollUp[i]) > 0.01) pxIndex = i; // simple non-zero check
+        // Search from end to start to find last data point
+        for(let i=11; i>=0; i--) {
+            if (Math.abs(rollUp[i]) > 1) { // Threshold > 1 to ignore tiny rounding errors
+                pxIndex = i;
+                break;
+            }
         }
-        if(pxIndex === -1) pxIndex = 0; // Default if empty
+        if (pxIndex === -1) pxIndex = 0; // Default to April if empty
 
-        // 3. Render Dashboard
         renderDashboard(sheetData, rollUp, pxIndex);
     }
 
     function renderDashboard(sheetData, rollUp, pxIndex) {
         document.getElementById('drop-zone').classList.add('hidden');
         document.getElementById('dashboard').classList.remove('hidden');
-        document.getElementById('period-header').innerText = `Reporting Period: ${PERIODS[pxIndex]}`;
+        document.getElementById('print-btn').classList.remove('hidden');
+        
+        const currentPeriodLabel = `${PERIOD_LABELS[pxIndex]} - ${FULL_LABELS[pxIndex]}`;
+        document.getElementById('current-period-label').innerText = `Current Reporting Period (PX): ${currentPeriodLabel}`;
 
         const kpiGrid = document.getElementById('kpi-grid');
         kpiGrid.innerHTML = '';
 
-        // Helper: Calculate RAG
-        const calcRag = (current, history) => {
-            if(!current) return 'R';
-            const avg = history.reduce((a,b)=>a+b,0) / history.length;
-            if(!avg) return 'A';
-            const dev = Math.abs((current - avg) / avg);
+        // Helper: RAG Logic
+        const getRag = (val, historyArr) => {
+            if (!val) return 'R';
+            const avg = historyArr.length ? historyArr.reduce((a,b)=>a+b,0)/historyArr.length : 0;
+            if (!avg) return 'A'; // No history
+            const dev = Math.abs((val - avg) / avg);
             return dev <= 0.15 ? 'G' : (dev <= 0.30 ? 'A' : 'R');
         };
 
@@ -165,57 +243,60 @@
             div.innerHTML = `
                 <div class="kpi-title">${title}</div>
                 <div class="kpi-value">£${val.toLocaleString('en-GB', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                <div class="kpi-sub">Status: ${rag === 'G' ? 'On Track' : (rag==='A'?'Review':'Attention')}</div>
+                <div class="kpi-sub">Status: ${rag === 'G' ? 'On Track' : (rag==='A'?'Review':'Action Required')}</div>
             `;
             return div;
         };
 
-        // Generate Cards for Each Sheet + Platform
-        // Platform First
+        // 1. Platform Card
         const platPx = rollUp[pxIndex];
         const platHist = rollUp.slice(Math.max(0, pxIndex-3), pxIndex);
-        kpiGrid.appendChild(createCard("PLATFORM TOTAL", platPx, calcRag(platPx, platHist)));
+        kpiGrid.appendChild(createCard("PLATFORM TOTAL", platPx, getRag(platPx, platHist)));
 
-        Object.keys(sheetData).forEach(name => {
-            const series = sheetData[name];
-            const pxVal = series[pxIndex];
+        // 2. Sheet Cards
+        TARGET_KEYS.forEach(key => {
+            const series = sheetData[key];
+            const val = series[pxIndex];
             const hist = series.slice(Math.max(0, pxIndex-3), pxIndex);
-            kpiGrid.appendChild(createCard(name, pxVal, calcRag(pxVal, hist)));
+            kpiGrid.appendChild(createCard(key, val, getRag(val, hist)));
         });
 
-        // 4. Render Charts (Truncated to PX)
-        const labels = PERIODS.slice(0, pxIndex + 1);
+        // 3. Charts (Truncated)
+        const labels = FULL_LABELS.slice(0, pxIndex + 1); // Truncate X-axis
         
-        // Platform Chart
         new Chart(document.getElementById('platformChart'), {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Total Spend (£)',
+                    label: 'Total Spend',
                     data: rollUp.slice(0, pxIndex + 1),
                     borderColor: '#0078d4',
-                    backgroundColor: 'rgba(0, 120, 212, 0.1)',
+                    backgroundColor: 'rgba(0,120,212,0.1)',
                     fill: true,
                     tension: 0.3
                 }]
             },
-            options: { responsive: true, plugins: { legend: {display: false} } }
+            options: { responsive: true, plugins: { legend: {display:false} } }
         });
 
-        // Consumer Chart
-        const consumerData = sheetData['One Consumer'] || [];
         new Chart(document.getElementById('consumerChart'), {
             type: 'bar',
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'One Consumer (£)',
-                    data: consumerData.slice(0, pxIndex + 1),
+                    label: 'One Consumer',
+                    data: sheetData['One Consumer'].slice(0, pxIndex + 1),
                     backgroundColor: '#002D72'
                 }]
-            }
+            },
+            options: { responsive: true, plugins: { legend: {display:false} } }
         });
+    }
+
+    function showError(msg) {
+        errorMsg.innerText = msg;
+        errorMsg.style.display = 'block';
     }
 </script>
 
